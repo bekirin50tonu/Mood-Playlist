@@ -2,19 +2,13 @@
 
 import { useState } from "react";
 import type { MusicalDna } from "@/lib/dna";
-import { readDna } from "@/lib/dna";
 
 type Status = "idle" | "loading" | "error" | "success";
 
 export function MusicalDnaCard() {
-  // Read lazily from localStorage on first render only — avoids a cascading
-  // render from a synchronous setState inside an effect.
-  const [dna, setDna] = useState<MusicalDna | null>(() => readDna());
+  const [dna, setDna] = useState<MusicalDna | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
-
-  // No server-side invalidation flag anymore — DNA lives in localStorage
-  // until the user explicitly recalculates or clears site data.
 
   async function recalculate() {
     setStatus("loading");
@@ -40,7 +34,8 @@ export function MusicalDnaCard() {
         <div>
           <h3 className="font-semibold">Your musical DNA</h3>
           <p className="text-xs text-neutral-500">
-            Derived from your recently-played tracks. Saved on this device.
+            Derived from your top artists, top tracks, and recent listening.
+            Saved per session.
           </p>
         </div>
         <button
@@ -60,57 +55,95 @@ export function MusicalDnaCard() {
           recent listening.
         </p>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-5">
+          <p className="text-sm text-neutral-300">{dna.tasteSummary}</p>
+
           {dna.topGenres.length > 0 && (
             <div>
               <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1.5">
                 Top genres
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {dna.topGenres.map((g) => (
+                {dna.topGenreCounts.map(({ genre, count }) => (
                   <span
-                    key={g}
+                    key={genre}
                     className="rounded-full bg-spotify/15 text-spotify border border-spotify/30 px-2.5 py-0.5 text-xs capitalize"
                   >
-                    {g}
+                    {genre}
+                    <span className="ml-1 text-spotify/60">×{count}</span>
                   </span>
                 ))}
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Stat label="Energy" value={dna.averages.energy} />
-            <Stat label="Valence" value={dna.averages.valence} />
-            <Stat label="Danceability" value={dna.averages.danceability} />
-            <Stat label="Acousticness" value={dna.averages.acousticness} />
-            <Stat label="Tempo" value={`${dna.averages.tempo} BPM`} />
-            <Stat label="Liveness" value={dna.averages.liveness} />
-            <Stat label="Speechiness" value={dna.averages.speechiness} />
-            <Stat
-              label="Sampled"
-              value={`${dna.trackCount} tracks`}
-            />
-          </div>
+          {dna.topTracks.length > 0 && (
+            <div>
+              <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1.5">
+                Top tracks
+              </p>
+              <ul className="space-y-1.5">
+                {dna.topTracks.map((t) => (
+                  <li
+                    key={t.id}
+                    className="flex items-center gap-3 rounded-lg bg-neutral-950/40 border border-neutral-800/50 px-2.5 py-1.5"
+                  >
+                    {t.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={t.image}
+                        alt={t.name}
+                        className="h-9 w-9 rounded object-cover"
+                      />
+                    ) : (
+                      <span className="h-9 w-9 rounded bg-neutral-800" />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm truncate">{t.name}</span>
+                      <span className="block text-xs text-neutral-500 truncate">
+                        {t.artists.join(", ")}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {dna.topArtists.length > 0 && (
+            <div>
+              <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1.5">
+                Top artists
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {dna.topArtists.map((a) => (
+                  <span
+                    key={a.id}
+                    className="flex items-center gap-2 rounded-full bg-neutral-950/40 border border-neutral-800/50 pl-1 pr-3 py-1"
+                  >
+                    {a.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={a.image}
+                        alt={a.name}
+                        className="h-6 w-6 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="h-6 w-6 rounded-full bg-neutral-800" />
+                    )}
+                    <span className="text-xs">{a.name}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <p className="text-[11px] text-neutral-600">
-            Generated {new Date(dna.generatedAt).toLocaleString()}
+            From {dna.trackCount} recent tracks • generated{" "}
+            {new Date(dna.generatedAt).toLocaleString()}
           </p>
         </div>
       )}
     </section>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-lg bg-neutral-950/60 border border-neutral-800/60 px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wider text-neutral-500">
-        {label}
-      </p>
-      <p className="text-sm font-medium tabular-nums">
-        {typeof value === "number" ? value.toFixed(2) : value}
-      </p>
-    </div>
   );
 }

@@ -1,72 +1,98 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { pickSeeds, type MusicalDnaSummary } from "@/lib/gemini";
+import { pickSeeds } from "@/lib/gemini";
 import {
   addTracksToPlaylist,
   createPlaylist,
-  getRecommendations,
-  type SpotifyRecommendation,
+  getTopArtists,
+  searchTracks,
+  type TrackCandidate,
 } from "@/lib/spotify";
 import { withValidToken, type SessionData } from "@/lib/session";
-import { readDna } from "@/lib/dna";
+import {
+  generateRequestSchema,
+  ValidationError,
+  formatIssues,
+  parseOrFail,
+  type DnaSummaryInput,
+} from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
-const MAX_SONGS = 50;
-const MIN_SONGS = 1;
-
-type GenerateBody = {
-  feeling?: unknown;
-  mood?: unknown;
-  count?: unknown;
-  dna?: MusicalDnaSummary;
-};
-
-function clampCount(n: unknown): number {
-  const num = typeof n === "number" ? n : parseInt(String(n), 10);
-  if (Number.isNaN(num)) return 10;
-  return Math.min(MAX_SONGS, Math.max(MIN_SONGS, Math.round(num)));
-}
 
 export async function POST(req: NextRequest) {
-  let body: GenerateBody;
+  let raw: unknown;
   try {
-    body = await req.json();
+    raw = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const feeling = String(body?.feeling ?? "").trim();
-  const mood = String(body?.mood ?? "").trim();
-  const count = clampCount(body?.count);
-
-  if (!feeling || !mood) {
-    return NextResponse.json(
-      { error: "feeling and mood are required" },
-      { status: 400 },
-    );
+  let body: {
+    feeling: string;
+    mood: string;
+    count: number;
+    dna?: DnaSummaryInput | null;
+  };
+  try {
+    body = parseOrFail(generateRequestSchema, raw);
+  } catch (err) {
+    if (err instanceof ValidationError) {
+      return NextResponse.json(
+        { error: "Validation failed", details: formatIssues(err.issues) },
+        { status: 400 },
+      );
+    }
+    throw err;
   }
 
-  // DNA is optional — user may not have computed it yet.
-  const dna: MusicalDnaSummary | null = body?.dna ?? readDna();
+  const { feeling, mood, count } = body;
+  const dna = body.dna ?? null;
 
   try {
-    const seeds = await pickSeeds({ feeling, mood, dna, count });
+    // Resolve the DNA the client didn't send: fetch the user's top artists so
+    // Gemini has a taste profile even on a fresh page load.
+    let resolvedDna = dna;
+    if (!resolvedDna) {
+      const topArtists = await withValidToken(() => getTopArtists(10));
+      resolvedDna = {
+        topGenres: Array.from(
+          new Set(topArtists.flatMap((a) => a.genres)),
+        ).slice(0, 5),
+        topTracks: [],
+        topArtists: topArtists.map((a) => ({
+          name: a.name,
+          genres: a.genres.slice(0, 3),
+        })),
+        tasteSummary: "",
+      };
+    }
 
-    const tracks = await withValidToken(() =>
-      getRecommendations({
-        seed_artists: seeds.seed_artists,
-        seed_genres: seeds.seed_genres,
-        seed_tracks: seeds.seed_tracks,
-        limit: count,
-        target: seeds.target,
-      }),
-    );
+    const seeds = await pickSeeds({ feeling, mood, dna: resolvedDna, count });
+
+    // Build a search query from the feeling + mood + DNA. Without
+    // /v1/recommendations (restricted for new apps), /v1/search is our source
+    // of candidate tracks. The query combines the mood with the top genre so
+    // results bend toward the user's taste.
+    const genreHint = resolvedDna?.topGenres?.[0];
+    const seedGenre = seeds.seed_genres[0];
+    const q = [feeling, mood, seedGenre ?? genreHint]
+      .filter(Boolean)
+      .join(" ");
+
+    let tracks = await withValidToken(() => searchTracks(q, count));
+
+    // Dedupe by id — search can overlap with seeds / overlap itself.
+    const seen = new Set<string>();
+    tracks = tracks.filter((t) => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
 
     if (!tracks.length) {
       return NextResponse.json(
         {
-          error:
-            "Spotify returned no recommendations for these seeds. Try a different mood.",
+          error: `No tracks found for "${q}". Try a different mood or feeling.`,
           seeds,
         },
         { status: 404 },
@@ -79,19 +105,21 @@ export async function POST(req: NextRequest) {
       playlist: { id: string; external_urls: { spotify: string } } | null;
       createError?: string;
     };
-    const out = await withValidToken(async (_accessToken: string, session: SessionData): Promise<PlaylistOutcome> => {
-      const playlist = await createPlaylist(
-        session.user.id,
-        seeds.playlistMoodLabel,
-        `Generated from feeling "${feeling}" and mood "${mood}" on ${new Date().toLocaleString()} • ${tracks.length} songs`,
-        false,
-      );
-      await addTracksToPlaylist(
-        playlist.id,
-        tracks.map((t) => `spotify:track:${t.id}`),
-      );
-      return { playlist };
-    }).catch((err: unknown) => {
+    const out = await withValidToken(
+      async (_accessToken: string, session: SessionData): Promise<PlaylistOutcome> => {
+        const playlist = await createPlaylist(
+          session.user.id,
+          seeds.playlistMoodLabel,
+          `Generated from feeling "${feeling}" and mood "${mood}" on ${new Date().toLocaleString()} • ${tracks.length} songs`,
+          false,
+        );
+        await addTracksToPlaylist(
+          playlist.id,
+          tracks.map((t) => `spotify:track:${t.id}`),
+        );
+        return { playlist };
+      },
+    ).catch((err: unknown) => {
       // Playlist creation is non-critical if scopes/parsing fail — still return tracks.
       return { playlist: null, createError: (err as Error).message };
     });
@@ -100,7 +128,7 @@ export async function POST(req: NextRequest) {
       seeds,
       playlist: out.playlist,
       createError: out.createError ?? null,
-      tracks: tracks.map((t: SpotifyRecommendation) => ({
+      tracks: tracks.map((t: TrackCandidate) => ({
         id: t.id,
         name: t.name,
         artists: t.artists.map((a) => a.name),
@@ -113,9 +141,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("playlist/generate failed:", err);
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 },
-    );
+    const status =
+      typeof (err as { status?: unknown }).status === "number"
+        ? (err as { status: number }).status
+        : 500;
+    return NextResponse.json({ error: (err as Error).message }, { status });
   }
 }

@@ -26,6 +26,7 @@ export const SCOPES = [
   "user-read-email",
   "user-read-recently-played",
   "user-top-read",
+  "playlist-read-private",
 ].join(" ");
 
 export function env(name: string): string {
@@ -99,23 +100,29 @@ export type SpotifyArtist = {
   id: string;
   name: string;
   genres: string[];
+  images: { url: string; width: number; height: number }[];
+  external_urls: { spotify: string };
 };
 
-export type SpotifyAudioFeatures = {
+// A track from any source we use for results (search / top / recently-played).
+// Structurally matches Spotify's "TrackObject" for the fields we consume, so
+// the playlist UI can treat every source uniformly.
+export type TrackCandidate = {
   id: string;
-  energy: number;
-  valence: number;
-  danceability: number;
-  acousticness: number;
-  instrumentalness: number;
-  speechiness: number;
-  liveness: number;
-  tempo: number;
+  name: string;
+  artists: { id: string; name: string }[];
+  album: {
+    name: string;
+    images: { url: string; width: number; height: number }[];
+  };
+  external_urls: { spotify: string };
+  preview_url: string | null;
   duration_ms: number;
-  key: number;
-  mode: number;
-  time_signature: number;
 };
+
+// Re-export the dna summary shapes so the rest of the app imports them from a
+// single place without circular coupling.
+export type { TrackSummary, ArtistSummary } from "./dna";
 
 // ── axios instance + interceptor plumbing ──────────────────────────────────
 
@@ -294,30 +301,11 @@ export function getRecentlyPlayed(
     .then((r) => r.data);
 }
 
-export function getAudioFeatures(
-  trackIds: string[],
-): Promise<{ audio_features: (SpotifyAudioFeatures | null)[] }> {
-  // Batch endpoint supports up to 100 ids per call.
-  const chunks: string[][] = [];
-  for (let i = 0; i < trackIds.length; i += 100)
-    chunks.push(trackIds.slice(i, i + 100));
-  return Promise.all(
-    chunks.map((chunk) =>
-      console.log("Fetching audio features for chunk:", chunk),
-      getClient()
-        .get<{ audio_features: (SpotifyAudioFeatures | null)[] }>(
-          `/audio-features`,
-          { params: { ids: chunk.join(",") } },
-        )
-        .then((r) => r.data.audio_features;console.error("Fetched audio features:", r.data.audio_features)),
-    ),
-  ).then((arrays) => ({ audio_features: arrays.flat() }));
-}
-
 export function getArtists(
   artistIds: string[],
 ): Promise<{ artists: SpotifyArtist[] }> {
   const unique = Array.from(new Set(artistIds));
+  if (!unique.length) return Promise.resolve({ artists: [] });
   const chunks: string[][] = [];
   for (let i = 0; i < unique.length; i += 50)
     chunks.push(unique.slice(i, i + 50));
@@ -332,48 +320,60 @@ export function getArtists(
   ).then((arrays) => ({ artists: arrays.flat() }));
 }
 
-export type SpotifyRecommendation = {
-  id: string;
-  name: string;
-  artists: { id: string; name: string }[];
-  album: {
-    name: string;
-    images: { url: string; width: number; height: number }[];
-  };
-  external_urls: { spotify: string };
-  preview_url: string | null;
-  duration_ms: number;
+// ── top artists / tracks (/v1/me/top/*) ──────────────────────────────────────
+// These endpoints remain available to new apps (unlike /audio-features and
+// /recommendations). We use them as the basis for the user's musical DNA and as
+// seed sources for playlist generation.
+
+export type TopTimeRange = "long_term" | "medium_term" | "short_term";
+
+type TopTracksResponse = {
+  items: TrackCandidate[];
 };
 
-export function getRecommendations(query: {
-  seed_artists?: string[];
-  seed_genres?: string[];
-  seed_tracks?: string[];
-  limit: number;
-  target?: Record<string, number>;
-  min?: Record<string, number>;
-  max?: Record<string, number>;
-}): Promise<SpotifyRecommendation[]> {
-  const params: Record<string, string> = {};
-  if (query.seed_artists?.length)
-    params.seed_artists = query.seed_artists.join(",");
-  if (query.seed_genres?.length)
-    params.seed_genres = query.seed_genres.join(",");
-  if (query.seed_tracks?.length)
-    params.seed_tracks = query.seed_tracks.join(",");
-  if (query.target)
-    for (const [k, v] of Object.entries(query.target))
-      params[`target_${k}`] = String(v);
-  if (query.min)
-    for (const [k, v] of Object.entries(query.min))
-      params[`min_${k}`] = String(v);
-  if (query.max)
-    for (const [k, v] of Object.entries(query.max))
-      params[`max_${k}`] = String(v);
-  params.limit = String(query.limit);
+type TopArtistsResponse = {
+  items: SpotifyArtist[];
+};
+
+export function getTopTracks(
+  limit = 10,
+  timeRange: TopTimeRange = "medium_term",
+): Promise<TrackCandidate[]> {
   return getClient()
-    .get<{ tracks: SpotifyRecommendation[] }>(`/recommendations`, { params })
-    .then((r) => r.data.tracks);
+    .get<TopTracksResponse>(`/me/top/tracks`, {
+      params: { limit, time_range: timeRange },
+    })
+    .then((r) => r.data.items);
+}
+
+export function getTopArtists(
+  limit = 10,
+  timeRange: TopTimeRange = "medium_term",
+): Promise<SpotifyArtist[]> {
+  return getClient()
+    .get<TopArtistsResponse>(`/me/top/artists`, {
+      params: { limit, time_range: timeRange },
+    })
+    .then((r) => r.data.items);
+}
+
+// ── search (/v1/search) ──────────────────────────────────────────────────────
+// Replacement for the now-restricted /recommendations endpoint. Returns the
+// same TrackCandidate shape the playlist UI already consumes. With a user token
+// present, Spotify infers the market from the account, so no market param is
+// needed.
+
+type SearchTracksResponse = { tracks: { items: TrackCandidate[] } };
+
+export function searchTracks(
+  query: string,
+  limit = 20,
+): Promise<TrackCandidate[]> {
+  return getClient()
+    .get<SearchTracksResponse>(`/search`, {
+      params: { q: query, type: "track", limit },
+    })
+    .then((r) => r.data.tracks.items);
 }
 
 export function createPlaylist(
@@ -394,21 +394,14 @@ export function addTracksToPlaylist(
   playlistId: string,
   uris: string[],
 ): Promise<void> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < uris.length; i += 100)
+    chunks.push(uris.slice(i, i + 100));
   return Promise.all(
-    uris.reduce<{ from: number; promises: Promise<void>[] }>(
-      (acc, _, i) => {
-        if (i % 100 === 0) {
-          acc.promises.push(
-            getClient()
-              .post(`/playlists/${playlistId}/tracks`, {
-                uris: uris.slice(i, i + 100),
-              })
-              .then(() => undefined),
-          );
-        }
-        return acc;
-      },
-      { from: 0, promises: [] },
-    ).promises,
+    chunks.map((chunk) =>
+      getClient()
+        .post(`/playlists/${playlistId}/tracks`, { uris: chunk })
+        .then(() => undefined),
+    ),
   ).then(() => undefined);
 }

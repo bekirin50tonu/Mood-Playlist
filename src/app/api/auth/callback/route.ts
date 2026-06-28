@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { exchangeToken, getProfile } from "@/lib/spotify";
+import { exchangeToken, getProfile, setCurrentToken } from "@/lib/spotify";
 import { setSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +40,10 @@ export async function GET(req: NextRequest) {
     return res;
   }
 
-  if (state && expectedState && state !== expectedState) {
+  // CSRF protection: we always set auth_state during login, so both must be
+  // present and equal. A missing cookie or mismatched state means the request
+  // is not part of a legitimate login flow — reject it.
+  if (!expectedState || !state || state !== expectedState) {
     const res = NextResponse.redirect(`${redirectBase}/`);
     res.cookies.delete("pkce_verifier");
     res.cookies.delete("auth_state");
@@ -56,6 +59,7 @@ export async function GET(req: NextRequest) {
       redirectUri: process.env.SPOTIFY_REDIRECT_URI!,
     });
 
+    setCurrentToken(tokenRes.access_token);
     const profile = await getProfile();
     const now = Date.now();
 

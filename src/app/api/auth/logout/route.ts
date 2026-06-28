@@ -5,5 +5,6 @@ export const dynamic = "force-dynamic";
 
 export async function POST() {
   await clearSession();
-  return NextResponse.json({ ok: true });
+  const redirectBase = process.env.NEXT_PUBLIC_REDIRECT_BASE ?? "/";
+  return NextResponse.redirect(redirectBase, 303);
 }

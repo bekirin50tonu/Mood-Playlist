@@ -13,7 +13,6 @@ type Phase = "loading-auth" | "logged-out" | "ready" | "generating" | "result" |
 type AppState = {
   phase: Phase;
   user: User | null;
-  // Result / generation params:
   feeling?: string;
   mood?: string;
   count?: number;
@@ -21,50 +20,66 @@ type AppState = {
   playlistUrl?: string | null;
   createError?: string | null;
   message?: string;
-  /** Incremented to force re-fetches / resets without URL param noise. */
-  authGeneration: number;
+  authFailed: boolean;
 };
 
 export default function Home() {
   const [state, setState] = useState<AppState>({
     phase: "loading-auth",
     user: null,
-    authGeneration: 0,
+    authFailed: false,
   });
+
   useEffect(() => {
     const ctrl = new AbortController();
     fetch("/api/auth/me", { cache: "no-store", signal: ctrl.signal })
       .then((r) => r.json())
       .then((data) => {
         if (data.authenticated) {
-          setState({
+          setState((prev) => ({
+            ...prev,
             phase: "ready",
             user: {
               name: data.user.displayName,
               image: data.user.image,
               url: data.user.profileUrl,
             },
-            authGeneration: 1,
-          });
+          }));
         } else {
-          setState({ phase: "logged-out", user: null, authGeneration: 1 });
+          setState((prev) => ({ ...prev, phase: "logged-out", user: null }));
         }
       })
       .catch((err) => {
         if (err.name === "AbortError") return;
-        setState({ phase: "logged-out", user: null, authGeneration: 1 });
+        setState((prev) => ({ ...prev, phase: "logged-out", user: null }));
       });
+
+    // Surface a notice if the auth callback hit an error (e.g. token exchange
+    // failure). The callback route sets auth_failed=1 on those failures.
+    try {
+      const failed = document.cookie
+        .split(";")
+        .some((c) => c.trim() === "auth_failed=1");
+      if (failed) {
+        setState((prev) => ({ ...prev, authFailed: true }));
+        // Clear the cookie so the toast doesn't reappear on next load.
+        document.cookie =
+          "auth_failed=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+      }
+    } catch {
+      /* ignore storage errors */
+    }
+
     return () => ctrl.abort();
   }, []);
 
   const handleGenerate = useCallback(async (data: MoodSubmit) => {
     setState((prev) => ({
+      ...prev,
       phase: "generating",
-      user: prev.user,
       feeling: data.feeling,
       mood: data.mood,
       count: data.count,
-      authGeneration: prev.authGeneration,
     }));
     try {
       const res = await fetch("/api/playlist/generate", {
@@ -80,10 +95,9 @@ export default function Home() {
       const out = await res.json();
       if (!res.ok) {
         setState((prev) => ({
+          ...prev,
           phase: "error",
-          user: prev.user,
           message: out.error || `Request failed (${res.status})`,
-          authGeneration: prev.authGeneration,
         }));
         return;
       }
@@ -98,21 +112,19 @@ export default function Home() {
         }
       }
       setState((prev) => ({
+        ...prev,
         phase: "result",
-        user: prev.user,
         feeling: data.feeling,
         mood: data.mood,
         tracks: out.tracks,
         playlistUrl: out.playlist?.external_urls?.spotify ?? null,
         createError: out.createError ?? null,
-        authGeneration: prev.authGeneration,
       }));
     } catch (err) {
       setState((prev) => ({
+        ...prev,
         phase: "error",
-        user: prev.user,
         message: (err as Error).message,
-        authGeneration: prev.authGeneration,
       }));
     }
   }, []);
@@ -120,16 +132,27 @@ export default function Home() {
   const handleReset = useCallback(() => {
     setState((prev) => {
       if (prev.phase === "result" || prev.phase === "error") {
-        return { phase: "ready", user: prev.user, authGeneration: prev.authGeneration };
+        return { ...prev, phase: "ready", authFailed: false };
       }
       return prev;
     });
+  }, []);
+
+  const dismissAuthFailed = useCallback(() => {
+    setState((prev) => ({ ...prev, authFailed: false }));
   }, []);
 
   return (
     <main className="flex-1 flex flex-col">
       <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:py-12 flex flex-col gap-8 flex-1">
         <Header user={state.user} />
+
+        {state.authFailed && (
+          <ErrorBanner
+            message="Spotify login failed. Please try again."
+            onDismiss={dismissAuthFailed}
+          />
+        )}
 
         {state.phase === "loading-auth" && <Loader message="Checking session…" />}
 
@@ -161,7 +184,7 @@ export default function Home() {
           </>
         )}
 
-        {(state.phase === "ready" || state.phase === "logged-out") && <MusicalDnaCard />}
+        {state.phase === "ready" && <MusicalDnaCard />}
 
         {(state.phase === "ready" || state.phase === "result" || state.phase === "error") && (
           <>

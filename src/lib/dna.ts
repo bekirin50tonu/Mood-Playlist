@@ -1,24 +1,39 @@
-// Musical DNA: derived from the user's recently-played tracks' audio features
-// and artist genres. Spotify has no "musical DNA" endpoint, so we compute it
-// ourselves and persist it to localStorage on the client.
+// Musical DNA: derived from the user's top artists + top tracks + recent
+// listening. Spotify has no "musical DNA" endpoint, so we compute it ourselves
+// and persist it to localStorage on the client.
+//
+// NOTE (Nov 2024 Spotify change): /v1/audio-features and /v1/audio-analysis are
+// restricted for new apps without "extended mode" access. There is no
+// replacement endpoint, so audio-feature averages (energy, valence, etc.) are
+// no longer part of the DNA. The DNA is now genre + track/artist based, and the
+// Gemini prompt compensates by receiving richer track/artist context instead of
+// numeric taste profiles.
 
 export const DNA_KEY = "spotify_musical_dna";
 
+export type TrackSummary = {
+  id: string;
+  name: string;
+  artists: string[]; // names only
+  album: string;
+  image: string | null; // first album image url
+};
+
+export type ArtistSummary = {
+  id: string;
+  name: string;
+  image: string | null; // first artist image url
+  genres: string[];
+};
+
 export type MusicalDna = {
   generatedAt: string;
-  topGenres: string[];
-  averages: {
-    energy: number;
-    valence: number;
-    danceability: number;
-    acousticness: number;
-    instrumentalness: number;
-    speechiness: number;
-    liveness: number;
-    tempo: number;
-    durationMs: number;
-  };
-  trackCount: number;
+  topGenres: string[]; // up to 5 genre names, lowercased, by frequency desc
+  topGenreCounts: { genre: string; count: number }[]; // same genres with counts, for the UI
+  topTracks: TrackSummary[]; // up to 10
+  topArtists: ArtistSummary[]; // up to 10
+  trackCount: number; // number of unique tracks sampled
+  tasteSummary: string; // human-readable, e.g. "You love metal and pop"
 };
 
 export function readDna(): MusicalDna | null {
@@ -42,84 +57,51 @@ export function clearDna(): void {
   window.localStorage.removeItem(DNA_KEY);
 }
 
-type AudioFeature = {
-  energy: number;
-  valence: number;
-  danceability: number;
-  acousticness: number;
-  instrumentalness: number;
-  speechiness: number;
-  liveness: number;
-  tempo: number;
-  duration_ms: number;
-} | null;
+// ── computation helpers ──────────────────────────────────────────────────────
 
-type Artist = { genres: string[] } | null;
+export type DnaInput = {
+  genres: string[]; // raw genre strings (may contain dupes across artists)
+  topTracks: TrackSummary[];
+  topArtists: ArtistSummary[];
+  recentTrackCount: number;
+};
 
-function round(n: number, p = 3): number {
-  const f = 10 ** p;
-  return Math.round(n * f) / f;
-}
+export type DnaComputation = Omit<MusicalDna, "generatedAt">;
 
-function avg(xs: number[]): number {
-  if (!xs.length) return 0;
-  return xs.reduce((a, b) => a + b, 0) / xs.length;
-}
-
-type FeatureKey =
-  | "energy"
-  | "valence"
-  | "danceability"
-  | "acousticness"
-  | "instrumentalness"
-  | "speechiness"
-  | "liveness"
-  | "tempo"
-  | "duration_ms";
-
-export function computeDna(args: {
-  audioFeatures: AudioFeature[];
-  artists: Artist[];
-}): MusicalDna {
-  const validFeatures = args.audioFeatures.filter(
-    (f): f is NonNullable<typeof f> =>
-      !!f &&
-      typeof f.energy === "number" &&
-      !Number.isNaN(f.energy),
-  );
-
-  const avgField = (key: FeatureKey) =>
-    round(avg(validFeatures.map((f) => (f[key] as number) ?? 0)));
-
-  // Count genre frequencies across all artists, keep top 5.
+/** Lowercase + dedupe-aware genre frequency count, returned sorted by count desc. */
+function rankGenres(genres: string[]): { genre: string; count: number }[] {
   const counts = new Map<string, number>();
-  for (const artist of args.artists) {
-    if (!artist) continue;
-    for (const genre of artist.genres ?? []) {
-      const g = genre.trim().toLowerCase();
-      if (!g) continue;
-      counts.set(g, (counts.get(g) ?? 0) + 1);
-    }
+  for (const raw of genres) {
+    const g = raw.trim().toLowerCase();
+    if (!g) continue;
+    counts.set(g, (counts.get(g) ?? 0) + 1);
   }
-  const topGenres = Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 5)
-    .map(([g]) => g);
+  return Array.from(counts.entries())
+    .map(([genre, count]) => ({ genre, count }))
+    .sort((a, b) => b.count - a.count || a.genre.localeCompare(b.genre));
+}
+
+export function computeDna(input: DnaInput): DnaComputation {
+  const ranked = rankGenres(input.genres);
+  const topGenres = ranked.slice(0, 5).map((g) => g.genre);
 
   return {
-    generatedAt: new Date().toISOString(),
     topGenres,
-    averages: {
-      energy: avgField("energy"),
-      valence: avgField("valence"),
-      danceability: avgField("danceability"),
-      acousticness: avgField("acousticness"),
-      instrumentalness: avgField("instrumentalness"),
-      speechiness: avgField("speechiness"),
-      liveness: avgField("liveness"),
-      tempo: round(avgField("tempo"), 1),
-      durationMs: Math.round(avgField("duration_ms")),
-    },
-    trackCount: validFeatures.length,
+    topGenreCounts: ranked.slice(0, 5),
+    topTracks: input.topTracks.slice(0, 10),
+    topArtists: input.topArtists.slice(0, 10),
+    trackCount: input.recentTrackCount,
+    tasteSummary: summarizeTaste(topGenres),
   };
+}
+
+/** Build a short human-readable taste line, e.g. "You love metal and pop". */
+export function summarizeTaste(topGenres: string[]): string {
+  if (!topGenres.length) return "Your taste is a mystery so far.";
+  // Capitalize the first letter of each genre for display.
+  const fmt = (g: string) => g.charAt(0).toUpperCase() + g.slice(1);
+  if (topGenres.length === 1) return `You love ${fmt(topGenres[0])}.`;
+  const head = topGenres.slice(0, -1).map(fmt).join(", ");
+  const last = fmt(topGenres[topGenres.length - 1]);
+  return `You love ${head} and ${last}.`;
 }
