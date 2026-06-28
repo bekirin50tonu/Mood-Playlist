@@ -13,6 +13,7 @@ import { GoogleGenAI } from "@google/genai";
 import {
   geminiSeedsSchema,
   normalizeGeminiSeeds,
+  describeGeminiShape,
   type GeminiSeedsInput,
 } from "./schemas";
 
@@ -49,6 +50,7 @@ export async function pickSeeds(args: {
   feeling: string;
   mood: string;
   genre: string;
+  artist: string;
   dna: MusicalDnaSummary | null;
   count: number;
 }): Promise<GeminiSeeds> {
@@ -68,6 +70,11 @@ export async function pickSeeds(args: {
       )
     : "No DNA available (user has not listened enough or DNA not computed yet).";
 
+  // Build a line for the artist override if present.
+  const artistLine = args.artist
+    ? `The user wants to prioritize this artist: "${args.artist}". Lean heavily on this artist when picking seed_artists and seed_tracks.`
+    : "";
+
   // The user-supplied genre (if any) is the strongest signal — it should
   // anchor the seed picks. When empty, fall back to DNA/mood blending.
   const genreLine = args.genre
@@ -79,6 +86,7 @@ export async function pickSeeds(args: {
 Today they feel: "${args.feeling}"
 Their mood is: "${args.mood}"
 They want ${args.count} songs.
+${artistLine}
 ${genreLine}
 
 Their musical DNA (derived from their top artists, top tracks, and recent listening) is:
@@ -120,10 +128,14 @@ Return ONLY valid JSON — no markdown, no commentary, no code fences:
 
   let parsed: GeminiSeedsInput;
   try {
-    // Schema accepts a flat shape or a { playlist: { ... } } wrapper —
-    // normalize to the flat shape before reading fields.
-    parsed = normalizeGeminiSeeds(geminiSeedsSchema.parse(JSON.parse(cleaned)));
+    const rawJson = JSON.parse(cleaned);
+    parsed = normalizeGeminiSeeds(geminiSeedsSchema.parse(rawJson));
+    console.log(
+      `[gemini] seeds parsed (${describeGeminiShape(rawJson)})`,
+    );
   } catch (err) {
+    // Log the raw model output so we can debug new wrapper shapes.
+    console.error("[gemini] raw model output:", cleaned.slice(0, 500));
     throw new Error(
       `Gemini returned invalid seeds: ${
         err instanceof Error ? err.message : "unknown error"

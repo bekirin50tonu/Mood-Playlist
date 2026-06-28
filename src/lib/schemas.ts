@@ -64,6 +64,8 @@ export const generateRequestSchema = z
     // Gemini so results bend toward the requested style. Empty string and
     // missing key both treated as "no genre override".
     genre: z.string().trim().max(100).optional().default(""),
+    // Optional artist override — prioritizes songs from this artist in search.
+    artist: z.string().trim().max(100).optional().default(""),
     // The client sends dna: null when nothing is in localStorage yet, a DNA
     // object when present, or omits the key. Accept all three.
     dna: dnaSummarySchema.nullable().optional(),
@@ -95,43 +97,53 @@ export type PlaylistCreateRequestInput = z.infer<
 // /recommendations). Gemini returns seeds + a title; we build candidates via
 // /v1/search.
 //
-// The prompt asks for a flat object, but Gemini sometimes wraps the seeds in
-// a "playlist" (or similar) object. Accept both the flat shape and a one-level
-// wrapper, then flatten — strict mode is applied to the inner shape so we
-// still reject truly malformed payloads (e.g. missing seed_artists).
+// The prompt asks for a flat object, but Gemini sometimes wraps the seeds in a
+// single-key object (observed keys: "playlist", "songs", "tracks", "result",
+// "seeds"). Rather than enumerate every key, accept:
+//   - the flat shape, OR
+//   - a single-key wrapper whose value is the flat shape.
+// Strict mode is applied to the inner shape so we still reject truly
+// malformed payloads (e.g. missing seed_artists).
 
-const geminiSeedsFlatSchema = z
-  .object({
-    seed_artists: z.array(z.string()).max(5),
-    seed_genres: z.array(z.string()).max(5),
-    seed_tracks: z.array(z.string()).max(5),
-    playlistMoodLabel: z.string().max(60),
-  })
-  .strict();
+const geminiSeedsFlatShape = {
+  seed_artists: z.array(z.string()).max(5),
+  seed_genres: z.array(z.string()).max(5),
+  seed_tracks: z.array(z.string()).max(5),
+  playlistMoodLabel: z.string().max(60),
+} as const;
 
-// Known wrapping keys Gemini has been observed to use. We intentionally don't
-// enumerate every possible key — just the ones we'd recognize. Any other
-// wrapper shape still triggers a validation error.
-const geminiSeedsWrapperSchema = z.object({
-  playlist: geminiSeedsFlatSchema,
-});
+export const geminiSeedsFlatSchema = z.object(geminiSeedsFlatShape).strict();
+
+// Catch-all wrapper: a single-key object whose value is a valid flat seed
+// object. z.union disambiguates against the flat shape by which keys are
+// present, so the flat shape wins when all four fields appear at top level.
+const geminiSeedsWrapperSchema = z
+  .object({})
+  .catchall(geminiSeedsFlatSchema)
+  .refine((obj) => Object.keys(obj).length === 1, "expected a single wrapper key")
+  .transform((obj) => Object.values(obj)[0]);
 
 export const geminiSeedsSchema = z.union([
   geminiSeedsFlatSchema,
   geminiSeedsWrapperSchema,
 ]);
 
-// Normalize either shape into the flat input type.
+// Flatten whatever shape parsed into the flat input type.
 export function normalizeGeminiSeeds(
   data: z.infer<typeof geminiSeedsSchema>,
 ): GeminiSeedsInput {
-  if ("playlist" in data && data.playlist && typeof data.playlist === "object") {
-    return data.playlist;
-  }
-  return data as GeminiSeedsInput;
+  return data;
 }
 
 export type GeminiSeedsInput = z.infer<typeof geminiSeedsFlatSchema>;
+
+/** Human-readable hint about the wrapper used, for logging. */
+export function describeGeminiShape(data: unknown): string {
+  if (!data || typeof data !== "object") return typeof data;
+  const keys = Object.keys(data as object);
+  if (keys.includes("seed_artists")) return `flat {${keys.join(",")}}`;
+  return `wrapper {${keys.slice(0, 5).join(",")}}`;
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

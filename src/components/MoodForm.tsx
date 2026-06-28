@@ -13,8 +13,9 @@ type FormErrors = {
 export type MoodSubmit = {
   feeling: string;
   mood: string;
-  count: number;
   genre: string;
+  artist: string;
+  count: number;
   dna: MusicalDna | null;
 };
 
@@ -31,6 +32,7 @@ export function MoodForm({
   const [feeling, setFeeling] = useState("");
   const [mood, setMood] = useState("");
   const [genre, setGenre] = useState("");
+  const [artist, setArtist] = useState("");
   const [count, setCount] = useState(10);
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -57,6 +59,7 @@ export function MoodForm({
       feeling: feeling.trim(),
       mood: mood.trim(),
       genre: genre.trim(),
+      artist: artist.trim(),
       count: Number(count),
       dna,
     });
@@ -131,6 +134,24 @@ export function MoodForm({
           onBlur={() => blurField("genre")}
           className={inputClass(false)}
           placeholder="e.g. outlaw southern rock, 90s hiphop, dark synthwave"
+          autoComplete="off"
+        />
+      </Field>
+
+      <Field
+        id="artist"
+        label="Artist (optional)"
+        hint="Prioritize songs from this artist."
+        error={undefined}
+      >
+        <input
+          id="artist"
+          type="text"
+          value={artist}
+          onChange={(e) => setArtist(e.target.value)}
+          onBlur={() => blurField("artist")}
+          className={inputClass(false)}
+          placeholder="e.g. Johnny Cash, Radiohead"
           autoComplete="off"
         />
       </Field>

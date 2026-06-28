@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     mood: string;
     count: number;
     genre: string;
+    artist: string;
     dna?: DnaSummaryInput | null;
   };
   try {
@@ -44,8 +45,9 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  const { feeling, mood, count, genre } = body;
+  const { feeling, mood, count, genre, artist } = body;
   const trimmedGenre = genre.trim();
+  const trimmedArtist = artist.trim();
   const dna = body.dna ?? null;
 
   try {
@@ -71,17 +73,19 @@ export async function POST(req: NextRequest) {
       feeling,
       mood,
       genre: trimmedGenre,
+      artist: trimmedArtist,
       dna: resolvedDna,
       count,
     });
 
     // Build a search query. Without /v1/recommendations (restricted for new
-    // apps), /v1/search is our source of candidate tracks. The user-supplied
-    // genre (if any) is the highest-priority signal, so it comes first; then
-    // feeling + mood, then Gemini's suggested seed genre / DNA top genre.
+    // apps), /v1/search is our source of candidate tracks. Priority ordering:
+    // 1. Artist override (highest), 2. Genre override, 3. Feeling + mood,
+    // 4. Gemini's seed genre / DNA top genre.
     const genreHint = resolvedDna?.topGenres?.[0];
     const seedGenre = seeds.seed_genres[0];
     const q = [
+      trimmedArtist || null,
       trimmedGenre || null,
       feeling,
       mood,
