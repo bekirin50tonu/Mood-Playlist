@@ -60,6 +60,10 @@ export const generateRequestSchema = z
     // Coerce so a count arriving as a string query param still parses; fall
     // back to 10 when missing/NaN, then clamp to Spotify-friendly bounds.
     count: z.coerce.number().int().min(1).max(50).default(10),
+    // Optional genre/style override — sent verbatim to Spotify search and
+    // Gemini so results bend toward the requested style. Empty string and
+    // missing key both treated as "no genre override".
+    genre: z.string().trim().max(100).optional().default(""),
     // The client sends dna: null when nothing is in localStorage yet, a DNA
     // object when present, or omits the key. Accept all three.
     dna: dnaSummarySchema.nullable().optional(),

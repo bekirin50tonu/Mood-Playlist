@@ -14,6 +14,7 @@ export type MoodSubmit = {
   feeling: string;
   mood: string;
   count: number;
+  genre: string;
   dna: MusicalDna | null;
 };
 
@@ -29,6 +30,7 @@ export function MoodForm({
 }) {
   const [feeling, setFeeling] = useState("");
   const [mood, setMood] = useState("");
+  const [genre, setGenre] = useState("");
   const [count, setCount] = useState(10);
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -54,6 +56,7 @@ export function MoodForm({
     onSubmit({
       feeling: feeling.trim(),
       mood: mood.trim(),
+      genre: genre.trim(),
       count: Number(count),
       dna,
     });
@@ -111,6 +114,24 @@ export function MoodForm({
           placeholder="e.g. melancholic optimism, Friday-night buzz"
           autoComplete="off"
           required
+        />
+      </Field>
+
+      <Field
+        id="genre"
+        label="Genre (optional)"
+        hint="Narrow the search to a genre or style."
+        error={undefined}
+      >
+        <input
+          id="genre"
+          type="text"
+          value={genre}
+          onChange={(e) => setGenre(e.target.value)}
+          onBlur={() => blurField("genre")}
+          className={inputClass(false)}
+          placeholder="e.g. outlaw southern rock, 90s hiphop, dark synthwave"
+          autoComplete="off"
         />
       </Field>
 

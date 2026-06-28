@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     feeling: string;
     mood: string;
     count: number;
+    genre: string;
     dna?: DnaSummaryInput | null;
   };
   try {
@@ -43,7 +44,8 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  const { feeling, mood, count } = body;
+  const { feeling, mood, count, genre } = body;
+  const trimmedGenre = genre.trim();
   const dna = body.dna ?? null;
 
   try {
@@ -65,15 +67,26 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    const seeds = await pickSeeds({ feeling, mood, dna: resolvedDna, count });
+    const seeds = await pickSeeds({
+      feeling,
+      mood,
+      genre: trimmedGenre,
+      dna: resolvedDna,
+      count,
+    });
 
-    // Build a search query from the feeling + mood + DNA. Without
-    // /v1/recommendations (restricted for new apps), /v1/search is our source
-    // of candidate tracks. The query combines the mood with the top genre so
-    // results bend toward the user's taste.
+    // Build a search query. Without /v1/recommendations (restricted for new
+    // apps), /v1/search is our source of candidate tracks. The user-supplied
+    // genre (if any) is the highest-priority signal, so it comes first; then
+    // feeling + mood, then Gemini's suggested seed genre / DNA top genre.
     const genreHint = resolvedDna?.topGenres?.[0];
     const seedGenre = seeds.seed_genres[0];
-    const q = [feeling, mood, seedGenre ?? genreHint]
+    const q = [
+      trimmedGenre || null,
+      feeling,
+      mood,
+      seedGenre || genreHint || null,
+    ]
       .filter(Boolean)
       .join(" ");
 

@@ -48,6 +48,7 @@ function asSpotifyUri(prefix: string, value: string): string {
 export async function pickSeeds(args: {
   feeling: string;
   mood: string;
+  genre: string;
   dna: MusicalDnaSummary | null;
   count: number;
 }): Promise<GeminiSeeds> {
@@ -67,17 +68,24 @@ export async function pickSeeds(args: {
       )
     : "No DNA available (user has not listened enough or DNA not computed yet).";
 
+  // The user-supplied genre (if any) is the strongest signal — it should
+  // anchor the seed picks. When empty, fall back to DNA/mood blending.
+  const genreLine = args.genre
+    ? `The user specifically wants this genre/style: "${args.genre}". Make this the primary anchor for your seed picks — choose seed_artists, seed_genres, and seed_tracks that fit it.`
+    : "No specific genre requested — blend the user's DNA with their mood.";
+
   const prompt = `You are a music curator. The user wants a Spotify playlist.
 
 Today they feel: "${args.feeling}"
 Their mood is: "${args.mood}"
 They want ${args.count} songs.
+${genreLine}
 
 Their musical DNA (derived from their top artists, top tracks, and recent listening) is:
 ${dnaText}
 
-Pick search seeds that blend their DNA with today's mood. Prefer genres that
-overlap with their DNA. Suggest real, specific artists and tracks the user is
+Pick search seeds that match the requested genre/style (if any) blended with
+their DNA and mood. Suggest real, specific artists and tracks the user is
 likely to enjoy — lean on their top artists/tracks when picking seed_artists
 and seed_tracks.
 
