@@ -90,8 +90,13 @@ export type PlaylistCreateRequestInput = z.infer<
 // No "target" audio-feature block anymore (we can't send it anywhere without
 // /recommendations). Gemini returns seeds + a title; we build candidates via
 // /v1/search.
+//
+// The prompt asks for a flat object, but Gemini sometimes wraps the seeds in
+// a "playlist" (or similar) object. Accept both the flat shape and a one-level
+// wrapper, then flatten — strict mode is applied to the inner shape so we
+// still reject truly malformed payloads (e.g. missing seed_artists).
 
-export const geminiSeedsSchema = z
+const geminiSeedsFlatSchema = z
   .object({
     seed_artists: z.array(z.string()).max(5),
     seed_genres: z.array(z.string()).max(5),
@@ -100,7 +105,29 @@ export const geminiSeedsSchema = z
   })
   .strict();
 
-export type GeminiSeedsInput = z.infer<typeof geminiSeedsSchema>;
+// Known wrapping keys Gemini has been observed to use. We intentionally don't
+// enumerate every possible key — just the ones we'd recognize. Any other
+// wrapper shape still triggers a validation error.
+const geminiSeedsWrapperSchema = z.object({
+  playlist: geminiSeedsFlatSchema,
+});
+
+export const geminiSeedsSchema = z.union([
+  geminiSeedsFlatSchema,
+  geminiSeedsWrapperSchema,
+]);
+
+// Normalize either shape into the flat input type.
+export function normalizeGeminiSeeds(
+  data: z.infer<typeof geminiSeedsSchema>,
+): GeminiSeedsInput {
+  if ("playlist" in data && data.playlist && typeof data.playlist === "object") {
+    return data.playlist;
+  }
+  return data as GeminiSeedsInput;
+}
+
+export type GeminiSeedsInput = z.infer<typeof geminiSeedsFlatSchema>;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

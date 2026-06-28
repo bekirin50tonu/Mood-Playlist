@@ -10,7 +10,11 @@
 // numeric taste profile.
 
 import { GoogleGenAI } from "@google/genai";
-import { geminiSeedsSchema, type GeminiSeedsInput } from "./schemas";
+import {
+  geminiSeedsSchema,
+  normalizeGeminiSeeds,
+  type GeminiSeedsInput,
+} from "./schemas";
 
 export type MusicalDnaSummary = {
   topGenres: string[];
@@ -108,7 +112,9 @@ Return ONLY valid JSON — no markdown, no commentary, no code fences:
 
   let parsed: GeminiSeedsInput;
   try {
-    parsed = geminiSeedsSchema.parse(JSON.parse(cleaned));
+    // Schema accepts a flat shape or a { playlist: { ... } } wrapper —
+    // normalize to the flat shape before reading fields.
+    parsed = normalizeGeminiSeeds(geminiSeedsSchema.parse(JSON.parse(cleaned)));
   } catch (err) {
     throw new Error(
       `Gemini returned invalid seeds: ${
