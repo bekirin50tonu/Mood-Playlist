@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { MusicalDna } from "@/lib/dna";
-import { readDna } from "@/lib/dna";
+import { useDnaStore } from "@/lib/dnaStore";
 
 type FormErrors = {
   feeling?: string;
@@ -50,7 +50,7 @@ export function MoodForm({
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
-    const dna = readDna();
+    const dna = useDnaStore.getState().dna;
     onSubmit({
       feeling: feeling.trim(),
       mood: mood.trim(),

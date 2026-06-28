@@ -6,6 +6,7 @@ import { LoginButton } from "@/components/LoginButton";
 import { MusicalDnaCard } from "@/components/MusicalDnaCard";
 import { PlaylistResult, type GeneratedTrack } from "@/components/PlaylistResult";
 import { Loader } from "@/components/Loader";
+import { useDnaStore } from "@/lib/dnaStore";
 
 type User = { name: string | null; image: string | null; url: string };
 type Phase = "loading-auth" | "logged-out" | "ready" | "generating" | "result" | "error";
@@ -28,6 +29,11 @@ export default function Home() {
     user: null,
     authFailed: false,
   });
+
+  useEffect(() => {
+    // Hydrate DNA from localStorage on first mount.
+    useDnaStore.getState().hydrate();
+  }, []);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -99,16 +105,6 @@ export default function Home() {
           message: out.error || `Request failed (${res.status})`,
         }));
         return;
-      }
-      if (data.dna) {
-        try {
-          window.localStorage.setItem(
-            "spotify_musical_dna",
-            JSON.stringify(data.dna),
-          );
-        } catch {
-          /* ignore storage errors */
-        }
       }
       setState((prev) => ({
         ...prev,

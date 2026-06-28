@@ -1,32 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import type { MusicalDna } from "@/lib/dna";
-
-type Status = "idle" | "loading" | "error" | "success";
+import { useDnaStore } from "@/lib/dnaStore";
 
 export function MusicalDnaCard() {
-  const [dna, setDna] = useState<MusicalDna | null>(null);
-  const [status, setStatus] = useState<Status>("idle");
-  const [error, setError] = useState<string | null>(null);
-
-  async function recalculate() {
-    setStatus("loading");
-    setError(null);
-    try {
-      const res = await fetch("/api/dna");
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Request failed (${res.status})`);
-      }
-      const data = await res.json();
-      setDna(data.dna);
-      setStatus("success");
-    } catch (err) {
-      setStatus("error");
-      setError((err as Error).message);
-    }
-  }
+  const dna = useDnaStore((s) => s.dna);
+  const status = useDnaStore((s) => s.status);
+  const error = useDnaStore((s) => s.error);
+  const recalculate = useDnaStore((s) => s.recalculate);
 
   return (
     <section className="w-full max-w-2xl mx-auto rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
