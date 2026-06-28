@@ -17,8 +17,7 @@ type AppState = {
   mood?: string;
   count?: number;
   tracks?: GeneratedTrack[];
-  playlistUrl?: string | null;
-  createError?: string | null;
+  playlistName?: string;
   message?: string;
   authFailed: boolean;
 };
@@ -117,8 +116,8 @@ export default function Home() {
         feeling: data.feeling,
         mood: data.mood,
         tracks: out.tracks,
-        playlistUrl: out.playlist?.external_urls?.spotify ?? null,
-        createError: out.createError ?? null,
+        playlistName:
+          out.seeds?.playlistMoodLabel ?? `${data.mood} • ${data.feeling}`,
       }));
     } catch (err) {
       setState((prev) => ({
@@ -128,6 +127,20 @@ export default function Home() {
       }));
     }
   }, []);
+
+  const handleCreatePlaylist = useCallback(
+    async (name: string, trackIds: string[]): Promise<string | null> => {
+      const res = await fetch("/api/playlist/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, trackIds }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || `Failed (${res.status})`);
+      return (out.playlist?.external_urls?.spotify as string) ?? null;
+    },
+    [],
+  );
 
   const handleReset = useCallback(() => {
     setState((prev) => {
@@ -200,10 +213,10 @@ export default function Home() {
         {state.phase === "result" && (
           <PlaylistResult
             tracks={state.tracks ?? []}
-            playlistUrl={state.playlistUrl ?? null}
-            createError={state.createError ?? null}
             feeling={state.feeling ?? ""}
             mood={state.mood ?? ""}
+            playlistName={state.playlistName ?? ""}
+            onCreatePlaylist={handleCreatePlaylist}
             onReset={handleReset}
           />
         )}

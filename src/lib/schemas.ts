@@ -68,6 +68,23 @@ export const generateRequestSchema = z
 
 export type GenerateRequestInput = z.infer<typeof generateRequestSchema>;
 
+// ── POST /api/playlist/create ──────────────────────────────────────────────
+
+export const playlistCreateRequestSchema = z
+  .object({
+    name: z.string().trim().min(1, "name is required").max(100),
+    description: z.string().trim().max(300).optional(),
+    trackIds: z
+      .array(z.string().trim().min(1))
+      .min(1, "at least one track is required")
+      .max(100),
+  })
+  .strict();
+
+export type PlaylistCreateRequestInput = z.infer<
+  typeof playlistCreateRequestSchema
+>;
+
 // ── Gemini seed output (parsed from the model's JSON) ──────────────────────
 //
 // No "target" audio-feature block anymore (we can't send it anywhere without

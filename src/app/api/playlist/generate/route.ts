@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { pickSeeds } from "@/lib/gemini";
+import { pickSeeds, type MusicalDnaSummary } from "@/lib/gemini";
 import {
-  addTracksToPlaylist,
-  createPlaylist,
   getTopArtists,
   searchTracks,
   type TrackCandidate,
 } from "@/lib/spotify";
-import { withValidToken, type SessionData } from "@/lib/session";
+import { withValidToken } from "@/lib/session";
 import {
   generateRequestSchema,
   ValidationError,
@@ -51,7 +49,7 @@ export async function POST(req: NextRequest) {
   try {
     // Resolve the DNA the client didn't send: fetch the user's top artists so
     // Gemini has a taste profile even on a fresh page load.
-    let resolvedDna = dna;
+    let resolvedDna: MusicalDnaSummary | null = dna;
     if (!resolvedDna) {
       const topArtists = await withValidToken(() => getTopArtists(10));
       resolvedDna = {
@@ -99,35 +97,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Best-effort playlist creation: if the user is logged in we create a
-    // playlist in their account; otherwise we return the track list only.
-    type PlaylistOutcome = {
-      playlist: { id: string; external_urls: { spotify: string } } | null;
-      createError?: string;
-    };
-    const out = await withValidToken(
-      async (_accessToken: string, session: SessionData): Promise<PlaylistOutcome> => {
-        const playlist = await createPlaylist(
-          session.user.id,
-          seeds.playlistMoodLabel,
-          `Generated from feeling "${feeling}" and mood "${mood}" on ${new Date().toLocaleString()} • ${tracks.length} songs`,
-          false,
-        );
-        await addTracksToPlaylist(
-          playlist.id,
-          tracks.map((t) => `spotify:track:${t.id}`),
-        );
-        return { playlist };
-      },
-    ).catch((err: unknown) => {
-      // Playlist creation is non-critical if scopes/parsing fail — still return tracks.
-      return { playlist: null, createError: (err as Error).message };
-    });
-
+    // Tracks only. Saving to a Spotify account is a separate, explicit action
+    // handled by POST /api/playlist/create (the "Create Playlist" button) so
+    // the user can regenerate freely before deciding what to save.
     return NextResponse.json({
       seeds,
-      playlist: out.playlist,
-      createError: out.createError ?? null,
       tracks: tracks.map((t: TrackCandidate) => ({
         id: t.id,
         name: t.name,
