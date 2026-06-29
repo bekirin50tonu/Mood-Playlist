@@ -12,7 +12,6 @@
 import { GoogleGenAI } from "@google/genai";
 import {
   geminiSeedsSchema,
-  normalizeGeminiSeeds,
   describeGeminiShape,
   type GeminiSeedsInput,
 } from "./schemas";
@@ -129,7 +128,7 @@ Return ONLY valid JSON — no markdown, no commentary, no code fences:
   let parsed: GeminiSeedsInput;
   try {
     const rawJson = JSON.parse(cleaned);
-    parsed = normalizeGeminiSeeds(geminiSeedsSchema.parse(rawJson));
+    parsed = geminiSeedsSchema.parse(rawJson);
     console.log(
       `[gemini] seeds parsed (${describeGeminiShape(rawJson)})`,
     );

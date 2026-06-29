@@ -114,35 +114,72 @@ const geminiSeedsFlatShape = {
 
 export const geminiSeedsFlatSchema = z.object(geminiSeedsFlatShape).strict();
 
-// Catch-all wrapper: a single-key object whose value is a valid flat seed
-// object. z.union disambiguates against the flat shape by which keys are
-// present, so the flat shape wins when all four fields appear at top level.
-const geminiSeedsWrapperSchema = z
-  .object({})
-  .catchall(geminiSeedsFlatSchema)
-  .refine((obj) => Object.keys(obj).length === 1, "expected a single wrapper key")
-  .transform((obj) => Object.values(obj)[0]);
+// Gemini output validation. Accept any shape so we can try to extract the flat
+// seed object from it. We validate the final extracted shape in the normalize
+// step below.
+export const geminiSeedsSchema = z
+  .unknown()
+  .transform((raw): GeminiSeedsInput => extractFlatSeeds(raw as unknown))
+  .pipe(geminiSeedsFlatSchema);
 
-export const geminiSeedsSchema = z.union([
-  geminiSeedsFlatSchema,
-  geminiSeedsWrapperSchema,
-]);
-
-// Flatten whatever shape parsed into the flat input type.
-export function normalizeGeminiSeeds(
-  data: z.infer<typeof geminiSeedsSchema>,
-): GeminiSeedsInput {
-  return data;
+// Extract the flat seed shape from whatever Gemini returned. Handles:
+//   - flat { seed_artists, seed_genres, seed_tracks, playlistMoodLabel }
+//   - { "wrapperKey": <flat shape> }  (any single-key wrapper)
+//   - { "wrapperKey": [array of tracks/artists] }  (treat array as seeds)
+// Returns default empty arrays/label if extraction fails.
+function extractFlatSeeds(raw: unknown): GeminiSeedsInput {
+  if (!raw || typeof raw !== "object") {
+    return { seed_artists: [], seed_genres: [], seed_tracks: [], playlistMoodLabel: "" };
+  }
+  const obj = raw as Record<string, unknown>;
+  // Already the flat shape (or already validated) — return as-is.
+  if (
+    obj.seed_artists !== undefined &&
+    obj.seed_genres !== undefined &&
+    obj.seed_tracks !== undefined
+  ) {
+    return {
+      seed_artists: Array.isArray(obj.seed_artists) ? obj.seed_artists : [],
+      seed_genres: Array.isArray(obj.seed_genres) ? obj.seed_genres : [],
+      seed_tracks: Array.isArray(obj.seed_tracks) ? obj.seed_tracks : [],
+      playlistMoodLabel:
+        typeof obj.playlistMoodLabel === "string" ? obj.playlistMoodLabel : "",
+    };
+  }
+  // Single-key wrapper: check if the value is an array (potential track list)
+  // or another object. Recurse into objects, treat arrays as seed_tracks.
+  const values = Object.values(obj);
+  if (values.length === 1) {
+    const inner = values[0];
+    if (Array.isArray(inner)) {
+      // Array of strings or objects — try to map to seed_tracks.
+      const asTracks = inner
+        .map((v) => (typeof v === "string" ? v : v?.id ?? v?.name ?? null))
+        .filter(Boolean);
+      return {
+        seed_artists: [],
+        seed_genres: [],
+        seed_tracks: asTracks,
+        playlistMoodLabel: "",
+      };
+    }
+    if (typeof inner === "object") {
+      return extractFlatSeeds(inner);
+    }
+  }
+  // Fallback: could not parse.
+  return { seed_artists: [], seed_genres: [], seed_tracks: [], playlistMoodLabel: "" };
 }
 
 export type GeminiSeedsInput = z.infer<typeof geminiSeedsFlatSchema>;
-
-/** Human-readable hint about the wrapper used, for logging. */
 export function describeGeminiShape(data: unknown): string {
   if (!data || typeof data !== "object") return typeof data;
   const keys = Object.keys(data as object);
   if (keys.includes("seed_artists")) return `flat {${keys.join(",")}}`;
-  return `wrapper {${keys.slice(0, 5).join(",")}}`;
+  const vals = Object.values(data as object);
+  const firstKey = keys[0] ?? "(none)";
+  const firstValIsArray = Array.isArray(vals[0]);
+  return `wrapper {${firstKey} -> ${firstValIsArray ? "array" : typeof vals[0]}}`;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
