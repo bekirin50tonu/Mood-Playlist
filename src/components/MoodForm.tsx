@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import type { MusicalDna } from "@/lib/dna";
 import { useDnaStore } from "@/lib/dnaStore";
 
 type FormErrors = {
@@ -16,7 +15,7 @@ export type MoodSubmit = {
   genre: string;
   artist: string;
   count: number;
-  dna: MusicalDna | null;
+  dna: ReturnType<typeof useDnaStore.getState>["dna"];
 };
 
 const MAX_SONGS = 50;
@@ -37,6 +36,8 @@ export function MoodForm({
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
+  const dna = useDnaStore((s) => s.dna);
+
   function validate(): FormErrors {
     const next: FormErrors = {};
     if (!feeling.trim()) next.feeling = "Tell us how you're feeling.";
@@ -54,7 +55,6 @@ export function MoodForm({
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
-    const dna = useDnaStore.getState().dna;
     onSubmit({
       feeling: feeling.trim(),
       mood: mood.trim(),
@@ -68,6 +68,12 @@ export function MoodForm({
   function blurField(name: string) {
     setTouched((t) => ({ ...t, [name]: true }));
     setErrors(validate());
+  }
+
+  function fillFromDna() {
+    if (!dna) return;
+    setGenre(dna.topGenres[0] ?? "");
+    setArtist(dna.topArtists[0]?.name ?? "");
   }
 
   return (
@@ -178,14 +184,26 @@ export function MoodForm({
         />
       </Field>
 
-      <button
-        type="submit"
-        className="w-full rounded-full bg-spotify hover:bg-spotify-dark active:scale-[0.98] text-neutral-950 font-semibold py-3.5 text-base transition-colors shadow-lg shadow-spotify/20 disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={!isLoggedIn}
-        title={!isLoggedIn ? "Log in with Spotify first" : "Generate playlist"}
-      >
-        Generate playlist
-      </button>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={fillFromDna}
+          disabled={!dna}
+          className="flex-1 rounded-full border border-neutral-700 hover:border-spotify/60 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-neutral-300 transition-colors"
+          title={!dna ? "No DNA available — calculate first" : "Fill genre/artist from your musical DNA"}
+        >
+          Fill from DNA
+        </button>
+
+        <button
+          type="submit"
+          className="flex-1 rounded-full bg-spotify hover:bg-spotify-dark active:scale-[0.98] text-neutral-950 font-semibold py-3.5 text-base transition-colors shadow-lg shadow-spotify/20 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!isLoggedIn}
+          title={!isLoggedIn ? "Log in with Spotify first" : "Generate playlist"}
+        >
+          Generate playlist
+        </button>
+      </div>
     </form>
   );
 }
