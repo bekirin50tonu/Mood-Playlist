@@ -109,8 +109,17 @@ export async function POST(req: NextRequest) {
         {
           error: `No tracks found for "${q}". Try a different mood or feeling.`,
           seeds,
+          returnedCount: 0,
+          requestedCount: count,
         },
         { status: 404 },
+      );
+    }
+
+    // Log if we got fewer tracks than requested (common with niche queries).
+    if (tracks.length < count) {
+      console.log(
+        `[generate] only ${tracks.length}/${count} tracks for: ${q}`,
       );
     }
 
